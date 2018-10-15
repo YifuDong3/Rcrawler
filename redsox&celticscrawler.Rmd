@@ -1,0 +1,189 @@
+
+# Install needed packages
+
+```{r}
+#install.packages("rvest")
+#install.packages("XML")
+#install.packages("RCurl")
+#install.packages("stringr")
+```
+
+# Baseball Data
+
+```{r}
+library(rvest)
+library(tidyverse)
+library(stringr)
+
+# Scrape the data
+url1 <- "https://www.baseball-reference.com/teams/BOS/"
+url2 <- "-schedule-scores.shtml"
+years <- c(2012:2017)
+urls <- str_c(url1, years, url2, sep = "")
+filenames <- str_c("baseball", years, sep = "")
+
+for (i in 1:length(urls)) {
+  read_url <- read_html(urls[i])
+  file = read_url %>%
+         html_table(fill=TRUE)%>%
+         .[[1]]
+  suppressMessages(
+    assign(filenames[i], file)
+  )
+  
+  colnames(file)[1] <-"YYYY"
+  colnames(file)[5] <-"home"
+  file = file[!str_detect(file$YYYY,"Gm#"),]
+  file[,1] = years[i]
+  
+  if(i == 1){
+    baseball <- file
+  }
+  else{
+    baseball <- rbind.data.frame(baseball, file)
+  }
+  
+}
+
+# Clean the data
+baseball = baseball[!str_detect(baseball$home,"@"),]
+baseball$Date = str_c(baseball$Date, baseball$YYYY, sep = ",")
+baseball$Date = str_replace(baseball$Date, " \\(.*\\)", "")
+baseball$Date = as.Date(baseball$Date,format="%a, %b %d,%Y")
+baseball$Attendance = gsub(",","",baseball$Attendance)
+baseball$Attendance = as.numeric(as.character(baseball$Attendance))
+
+
+# Export the data as csv
+#getwd()
+#setwd("D:/2018_Semester_1/MA615 Data Science in R/B1-Lecture/Assignment/Midterm_project/data")
+#write.csv(baseball, file = "baseball.csv", row.names = F, quote = F)
+```
+
+# Basketball Data
+
+## Basketball Game Date
+```{r}
+library(rvest)
+
+# Scrape tables on the Internet
+years <- 2012:2018
+urls <- paste0("http://www.espn.com/nba/team/schedule/_/name/bos/season/", years, "/seasontype/2")
+
+get_table <- function(url) {
+  url %>%
+    read_html() %>%
+    html_nodes(xpath = '/html/body/div[1]/div/div/div/div/div[5]/div[3]/div[2]/div[1]/div[1]/article/div/section/div[2]/section/section/table/tbody/tr/td/div/div/div[2]/table/tbody/tr/td/table') %>% 
+    html_table(fill = TRUE)
+}
+
+results <- sapply(urls, get_table)
+
+# Delete the first two rows
+nrow <- rep(NULL, length(results))
+for (i in 1:length(results)){
+  results[[i]] <- results[[i]][-(1:2), 1:3]
+  rownames(results[[i]]) <- 1:nrow(results[[i]])
+  nrow[i] <- dim(results[[i]])[1]
+}
+
+# Combine the six dataframes
+for (i in 1:length(results)){
+  if(i == 1){
+   data_bask <- results[[1]][, 1:3]
+  }
+  else{
+  data <- results[[i]][, 1:3]
+  data_bask <- rbind.data.frame(data_bask, data)
+  }
+}
+names(data_bask)<- c("DATE", "OPPONENT","RESULT")
+
+
+# First eliminate games in 2018 and 2011
+data_2018 <- nrow(data_bask)- which(results[[7]][41:nrow[7],] == "Wed, Apr 11")+1
+data_bask <- data_bask[-(data_2018:nrow(data_bask)),]
+data_2011 <- which(results[[1]][1:nrow[1],] == "Fri, Dec 30")
+data_bask <- data_bask[-(1:data_2011),]
+
+# Add column "YYYY" in dataframe
+
+end_2012 <- which(results[[1]][5:nrow[1],] == "Thu, Apr 26")+
+  which(results[[2]][1:nrow[2],] == "Sun, Dec 30")
+
+end_2013 <- which(results[[2]][31:nrow[2],] == "Wed, Apr 17")+
+  which(results[[3]][1:nrow[3],] == "Tue, Dec 31")
+
+end_2014 <- which(results[[3]][32:nrow[3],] == "Wed, Apr 16")+
+  which(results[[4]][1:nrow[4],] == "Wed, Dec 31")
+
+end_2015 <- which(results[[4]][30:nrow[4],] == "Wed, Apr 15")+
+  which(results[[5]][1:nrow[5],] == "Wed, Dec 30")
+
+end_2016 <- which(results[[5]][33:nrow[5],] == "Wed, Apr 13")+
+  which(results[[6]][1:nrow[6],] == "Fri, Dec 30")
+
+end_2017 <- which(results[[6]][35:nrow[6],] == "Wed, Apr 12")+
+  which(results[[7]][1:nrow[7],] == "Sun, Dec 31")
+
+YYYY <- rep(2012:2017,c(end_2012, end_2013, end_2014, end_2015, end_2016, end_2017))
+data_bask <- cbind.data.frame(YYYY, data_bask)
+
+
+# Delete the row of canceled and postponed games
+n = grep("Canceled", data_bask$RESULT) 
+data_bask <- data_bask[-n,]
+m = grep("Postponed", data_bask$RESULT) 
+data_bask <- data_bask[-m,]
+
+
+# Transform format of "DATE"
+library(stringr)
+data_bask$DATE = str_c(data_bask$DATE, data_bask$YYYY, sep = ",")
+data_bask$DATE = str_replace(data_bask$DATE, " \\(.*\\)", "")
+data_bask$DATE = as.Date(data_bask$DATE,format="%a, %b %d,%Y")
+
+```
+
+## Basketball Game Attendance data
+
+```{r}
+library(XML)
+library(RCurl)
+library(stringr)
+
+url1 <- "http://www.espn.com/nba/team/schedule/_/name/bos/season/"
+url2<- "/seasontype/2"
+
+years <- 2012:2018
+
+urls_bask <- paste0(url1, years, url2)
+
+N <- length(urls_bask)
+
+for (i in 1:N){
+  url_attendance<-xpathApply(htmlParse(urls_bask[i]),'//span[@class="ml4"]/a',xmlAttrs)
+  for(j in 1:length(url_attendance)){
+    url_attendance1<-htmlParse(url_attendance[[j]][1],encoding='UTF-8')
+    attendance<-xpathApply(url_attendance1,'//div[@class="game-info-note capacity"]',xmlValue)[[1]]
+    if(i==1&j==1)
+      Attendance<-attendance
+    if(i!=1 | (i==1 & j!=1))
+      Attendance<-rbind(Attendance,attendance)
+  }
+}
+Attendance <- as.numeric(str_c(substring(Attendance,13,14),substring(Attendance,16,18)))
+Attendance <- Attendance[5:(length(Attendance)-42)]
+
+#The game which are canceled or postponed have not been scraped automatically.
+
+```
+
+## Combine Date and Attendance
+```{r}
+data_bask <- cbind(data_bask, Attendance)
+# Delte rows in which entries include "@"(not home)
+n = grep("@", data_bask$OPPONENT) 
+data_bask <- data_bask[-n,]
+```
+
